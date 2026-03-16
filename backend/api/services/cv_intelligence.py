@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
+from .cv_gemini import GeminiReviewError, run_gemini_extraction_review
+from .cv_learning import load_learning_rules
+
 MAX_FILE_SIZE = 5 * 1024 * 1024
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
 
@@ -59,9 +62,17 @@ class CVEngineResult:
     page_count: int | None
     structured_cv: dict[str, Any]
     derived_metrics: dict[str, Any]
+    llm_structured_cv: dict[str, Any] | None = None
+    comparison: dict[str, Any] | None = None
+    extraction_mode: str = "heuristic"
 
 
-def extract_cv_intelligence(cv_file: Any, target_role: str | None = None) -> CVEngineResult:
+def extract_cv_intelligence(
+    cv_file: Any,
+    target_role: str | None = None,
+    use_llm: bool = True,
+    auto_learn: bool = True,
+) -> CVEngineResult:
     _validate_file(cv_file)
     extension = _get_extension(cv_file.name)
     raw_text, page_count = _extract_raw_text(cv_file, extension)
@@ -75,12 +86,46 @@ def extract_cv_intelligence(cv_file: Any, target_role: str | None = None) -> CVE
     structured = _normalize_output(structured)
     metrics = _derive_metrics(structured)
 
+    llm_structured = None
+    comparison = _default_comparison()
+    extraction_mode = "heuristic"
+
+    if use_llm:
+        try:
+            gemini_review = run_gemini_extraction_review(clean_text, target_role, structured, auto_learn)
+            if gemini_review.get("enabled"):
+                llm_structured = _normalize_output(gemini_review.get("llm_structured_cv") or {})
+                comparison = _compare_extraction_outputs(
+                    structured,
+                    llm_structured,
+                    gemini_review.get("review") or {},
+                    gemini_review.get("provider", "gemini"),
+                    gemini_review.get("model", "unknown"),
+                    gemini_review.get("learning_update") or {},
+                )
+                extraction_mode = "heuristic_with_gemini_review"
+            else:
+                comparison = {
+                    **_default_comparison(),
+                    "llm_available": False,
+                    "fallback_reason": gemini_review.get("reason", "Gemini review unavailable"),
+                }
+        except GeminiReviewError as exc:
+            comparison = {
+                **_default_comparison(),
+                "llm_available": False,
+                "fallback_reason": str(exc),
+            }
+
     return CVEngineResult(
         raw_text=raw_text,
         clean_text=clean_text,
         page_count=page_count,
         structured_cv=structured,
         derived_metrics=metrics,
+        llm_structured_cv=llm_structured,
+        comparison=comparison,
+        extraction_mode=extraction_mode,
     )
 
 
@@ -168,8 +213,10 @@ def _detect_sections(clean_text: str) -> dict[str, str]:
     sections[current_key] = []
 
     alias_lookup = {}
+    learned_aliases = load_learning_rules().get("section_aliases", {})
     for key, aliases in SECTION_ALIASES.items():
-        for alias in aliases:
+        merged_aliases = list(aliases) + list(learned_aliases.get(key, []))
+        for alias in merged_aliases:
             alias_lookup[alias] = key
 
     for line in lines:
@@ -270,6 +317,13 @@ def _extract_experience(experience_text: str, skills: dict[str, list[str]]) -> l
 
     blocks = [b.strip() for b in re.split(r"\n\s*\n", experience_text) if b.strip()]
     known_tech = {skill.lower() for group in skills.values() for skill in group}
+    learning_rules = load_learning_rules()
+    leadership_pattern = _signal_pattern(
+        ["led", "managed", "mentored", "supervised", "head"] + learning_rules.get("leadership_verbs", [])
+    )
+    ownership_pattern = _signal_pattern(
+        ["owned", "ownership", "end-to-end", "spearheaded", "drove"] + learning_rules.get("ownership_verbs", [])
+    )
 
     entries = []
     for block in blocks:
@@ -292,8 +346,8 @@ def _extract_experience(experience_text: str, skills: dict[str, list[str]]) -> l
                 if skill and skill in line_lower:
                     technologies_used.append(_title_case_skill(skill))
 
-        leadership = [line for line in lines if re.search(r"\b(led|managed|mentored|supervised|head)\b", line, re.I)]
-        ownership = [line for line in lines if re.search(r"\b(owned|ownership|end-to-end|spearheaded|drove)\b", line, re.I)]
+        leadership = [line for line in lines if leadership_pattern.search(line)]
+        ownership = [line for line in lines if ownership_pattern.search(line)]
         impact = [line for line in lines if _looks_like_metric(line)]
 
         entries.append(
@@ -636,7 +690,8 @@ def _tokenize_list(raw: str) -> list[str]:
 def _normalize_skill(skill: str) -> str:
     key = skill.strip().lower()
     key = re.sub(r"\s+", " ", key)
-    return TECH_ALIASES.get(key, key)
+    learned_aliases = load_learning_rules().get("tech_aliases", {})
+    return learned_aliases.get(key, TECH_ALIASES.get(key, key))
 
 
 def _title_case_skill(skill: str) -> str:
@@ -725,4 +780,71 @@ def _parse_date_token(token: str) -> date | None:
 
 
 def _looks_like_metric(line: str) -> bool:
-    return bool(re.search(r"(\d+%|\$\d+|\b\d+\b\s*(users|clients|days|weeks|months|years|x))", line, re.I))
+    learning_rules = load_learning_rules()
+    learned_metric_terms = learning_rules.get("metric_terms", [])
+    base_match = bool(re.search(r"(\d+%|\$\d+|\b\d+\b\s*(users|clients|days|weeks|months|years|x))", line, re.I))
+    term_match = any(term in line.lower() for term in learned_metric_terms)
+    return base_match or term_match
+
+
+def _signal_pattern(terms: list[str]) -> re.Pattern[str]:
+    escaped = [re.escape(term) for term in sorted(set(terms)) if term]
+    return re.compile(rf"\b({'|'.join(escaped)})\b", re.I)
+
+
+def _default_comparison() -> dict[str, Any]:
+    return {
+        "llm_available": False,
+        "provider": None,
+        "model": None,
+        "differences_summary": [],
+        "heuristic_misses": [],
+        "llm_misses": [],
+        "improvement_suggestions": [],
+        "risky_changes": [],
+        "learning_update": {
+            "rules_updated": False,
+            "applied_updates": {},
+            "skipped_updates": [],
+        },
+        "field_differences": {},
+        "fallback_reason": None,
+    }
+
+
+def _compare_extraction_outputs(
+    heuristic_structured: dict[str, Any],
+    llm_structured: dict[str, Any],
+    review: dict[str, Any],
+    provider: str,
+    model: str,
+    learning_update: dict[str, Any],
+) -> dict[str, Any]:
+    heuristic_skills = _flatten_skills(heuristic_structured.get("skills", {}))
+    llm_skills = _flatten_skills(llm_structured.get("skills", {}))
+
+    field_differences = {
+        "skills_only_in_heuristic": sorted(heuristic_skills - llm_skills),
+        "skills_only_in_llm": sorted(llm_skills - heuristic_skills),
+        "experience_count_delta": len(llm_structured.get("experience", [])) - len(heuristic_structured.get("experience", [])),
+        "project_count_delta": len(llm_structured.get("projects", [])) - len(heuristic_structured.get("projects", [])),
+        "confidence_score_delta": int(llm_structured.get("confidence_score", 0)) - int(heuristic_structured.get("confidence_score", 0)),
+    }
+
+    return {
+        "llm_available": True,
+        "provider": provider,
+        "model": model,
+        "differences_summary": review.get("differences_summary", []),
+        "heuristic_misses": review.get("heuristic_misses", []),
+        "llm_misses": review.get("llm_misses", []),
+        "improvement_suggestions": review.get("improvement_suggestions", []),
+        "risky_changes": review.get("risky_changes", []),
+        "learning_update": learning_update,
+        "field_differences": field_differences,
+        "fallback_reason": None,
+    }
+
+
+def _flatten_skills(skills: dict[str, list[str]]) -> set[str]:
+    return {skill for entries in skills.values() for skill in entries}

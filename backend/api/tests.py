@@ -28,6 +28,9 @@ class CvExtractApiTests(APITestCase):
 			raw_text="Raw CV",
 			clean_text="Clean CV",
 			page_count=1,
+			extraction_mode="heuristic_with_gemini_review",
+			llm_structured_cv={"summary": "LLM output"},
+			comparison={"llm_available": True, "provider": "gemini"},
 			derived_metrics={
 				"total_experience_months": 24,
 				"total_projects": 2,
@@ -76,6 +79,8 @@ class CvExtractApiTests(APITestCase):
 		self.assertEqual(response.status_code, 201)
 		self.assertEqual(response.data["profile_id"], 99)
 		self.assertEqual(response.data["career_level_estimate"], "mid")
+		self.assertEqual(response.data["extraction_mode"], "heuristic_with_gemini_review")
+		self.assertEqual(response.data["comparison"]["provider"], "gemini")
 		self.assertIn("structured_cv", response.data)
 		self.assertEqual(CvExtract.objects.count(), 1)
 
@@ -111,4 +116,6 @@ class CvExtractApiTests(APITestCase):
 		self.assertEqual(response.data["profile_id"], 42)
 		self.assertIn("structured_cv", response.data)
 		self.assertIn("skills", response.data["structured_cv"])
+		self.assertEqual(response.data["extraction_mode"], "heuristic")
+		self.assertFalse(response.data["comparison"]["llm_available"])
 		self.assertGreaterEqual(response.data["confidence_score"], 0)

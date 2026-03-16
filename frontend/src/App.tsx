@@ -9,6 +9,8 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [profileId, setProfileId] = useState("101");
   const [targetRole, setTargetRole] = useState("Backend Django Developer");
+  const [useLlm, setUseLlm] = useState(true);
+  const [autoLearn, setAutoLearn] = useState(true);
   const [file, setFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +40,8 @@ export default function App() {
     const formData = new FormData();
     formData.append("profile_id", profileId);
     formData.append("target_role", targetRole);
+    formData.append("use_llm", String(useLlm));
+    formData.append("auto_learn", String(autoLearn));
     formData.append("cv_file", file);
 
     setIsUploading(true);
@@ -109,6 +113,25 @@ export default function App() {
           <label>
             CV File
             <input type="file" accept=".pdf,.docx" onChange={handleFileChange} />
+          </label>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={useLlm}
+              onChange={(event) => setUseLlm(event.target.checked)}
+            />
+            <span>Use Gemini review when `GEMINI_API_KEY` is configured</span>
+          </label>
+
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={autoLearn}
+              onChange={(event) => setAutoLearn(event.target.checked)}
+              disabled={!useLlm}
+            />
+            <span>Auto-apply only safe learning-rule updates</span>
           </label>
 
           <button type="submit" disabled={isUploading}>
