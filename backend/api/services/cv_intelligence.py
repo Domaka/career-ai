@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from .cv_gemini import GeminiReviewError, run_gemini_extraction_review
+from .cv_openai import OpenAIReviewError, run_openai_extraction_review
 from .cv_learning import load_learning_rules
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -92,25 +92,25 @@ def extract_cv_intelligence(
 
     if use_llm:
         try:
-            gemini_review = run_gemini_extraction_review(clean_text, target_role, structured, auto_learn)
-            if gemini_review.get("enabled"):
-                llm_structured = _normalize_output(gemini_review.get("llm_structured_cv") or {})
+            llm_review = run_openai_extraction_review(clean_text, target_role, structured, auto_learn)
+            if llm_review.get("enabled"):
+                llm_structured = _normalize_output(llm_review.get("llm_structured_cv") or {})
                 comparison = _compare_extraction_outputs(
                     structured,
                     llm_structured,
-                    gemini_review.get("review") or {},
-                    gemini_review.get("provider", "gemini"),
-                    gemini_review.get("model", "unknown"),
-                    gemini_review.get("learning_update") or {},
+                    llm_review.get("review") or {},
+                    llm_review.get("provider", "openai"),
+                    llm_review.get("model", "unknown"),
+                    llm_review.get("learning_update") or {},
                 )
-                extraction_mode = "heuristic_with_gemini_review"
+                extraction_mode = "heuristic_with_openai_review"
             else:
                 comparison = {
                     **_default_comparison(),
                     "llm_available": False,
-                    "fallback_reason": gemini_review.get("reason", "Gemini review unavailable"),
+                    "fallback_reason": llm_review.get("reason", "OpenAI review unavailable"),
                 }
-        except GeminiReviewError as exc:
+        except OpenAIReviewError as exc:
             comparison = {
                 **_default_comparison(),
                 "llm_available": False,
@@ -159,10 +159,13 @@ def _extract_pdf_text(cv_file: Any) -> tuple[str, int | None]:
         import pdfplumber  # type: ignore
 
         text_parts = []
+        extracted_links: list[str] = []
         with pdfplumber.open(io.BytesIO(payload)) as pdf:
             for page in pdf.pages:
                 text_parts.append(page.extract_text() or "")
-            return "\n".join(text_parts), len(pdf.pages)
+                extracted_links.extend(_extract_pdfplumber_page_links(page))
+
+            return _append_links_to_text("\n".join(text_parts), extracted_links), len(pdf.pages)
     except ImportError:
         pass
     except Exception as exc:  # pragma: no cover - depends on file content
@@ -173,7 +176,8 @@ def _extract_pdf_text(cv_file: Any) -> tuple[str, int | None]:
 
         reader = PdfReader(io.BytesIO(payload))
         text_parts = [page.extract_text() or "" for page in reader.pages]
-        return "\n".join(text_parts), len(reader.pages)
+        extracted_links = _extract_pypdf_links(reader)
+        return _append_links_to_text("\n".join(text_parts), extracted_links), len(reader.pages)
     except ImportError as exc:
         raise CVExtractionError(
             "PDF extraction dependencies missing. Install pdfplumber or pypdf.", status_code=500
@@ -188,10 +192,16 @@ def _extract_docx_text(cv_file: Any) -> tuple[str, int | None]:
 
     try:
         from docx import Document  # type: ignore
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT  # type: ignore
 
         document = Document(io.BytesIO(payload))
         text = "\n".join(paragraph.text for paragraph in document.paragraphs)
-        return text, None
+        links = []
+        for rel in document.part.rels.values():
+            if rel.reltype == RT.HYPERLINK and rel.target_ref:
+                links.append(rel.target_ref.strip())
+
+        return _append_links_to_text(text, links), None
     except ImportError as exc:
         raise CVExtractionError("DOCX extraction dependency missing. Install python-docx.", status_code=500) from exc
     except Exception as exc:  # pragma: no cover - depends on file content
@@ -238,7 +248,7 @@ def _detect_sections(clean_text: str) -> dict[str, str]:
 def _build_structured_output(clean_text: str, sections: dict[str, str], target_role: str | None) -> dict[str, Any]:
     skills = _extract_skills(sections.get("skills", ""))
     experience = _extract_experience(sections.get("experience", ""), skills)
-    projects = _extract_projects(sections.get("projects", ""), skills)
+    projects = _extract_projects(sections.get("projects", ""), skills, clean_text)
     education = _extract_education(sections.get("education", ""))
     certifications = _extract_certifications(sections.get("certifications", ""))
 
@@ -369,12 +379,13 @@ def _extract_experience(experience_text: str, skills: dict[str, list[str]]) -> l
     return entries
 
 
-def _extract_projects(projects_text: str, skills: dict[str, list[str]]) -> list[dict[str, Any]]:
+def _extract_projects(projects_text: str, skills: dict[str, list[str]], clean_text: str) -> list[dict[str, Any]]:
     if not projects_text.strip():
         return []
 
     blocks = [b.strip() for b in re.split(r"\n\s*\n", projects_text) if b.strip()]
     known_tech = {skill.lower() for group in skills.values() for skill in group}
+    global_github_links = re.findall(r"https?://github\.com/[^\s)]+", clean_text, flags=re.I)
     projects = []
 
     for block in blocks:
@@ -409,7 +420,7 @@ def _extract_projects(projects_text: str, skills: dict[str, list[str]]) -> list[
                 "description": description,
                 "technologies_used": sorted(set(technologies)),
                 "metrics": metrics,
-                "github_links": github_links,
+                "github_links": github_links or global_github_links[:3],
                 "portfolio_relevance": relevance,
             }
         )
@@ -785,6 +796,39 @@ def _looks_like_metric(line: str) -> bool:
     base_match = bool(re.search(r"(\d+%|\$\d+|\b\d+\b\s*(users|clients|days|weeks|months|years|x))", line, re.I))
     term_match = any(term in line.lower() for term in learned_metric_terms)
     return base_match or term_match
+
+
+def _append_links_to_text(text: str, links: list[str]) -> str:
+    cleaned_links = sorted({link.strip() for link in links if link and link.strip()})
+    if not cleaned_links:
+        return text
+    return f"{text}\n\nExtracted Links\n" + "\n".join(cleaned_links)
+
+
+def _extract_pdfplumber_page_links(page: Any) -> list[str]:
+    links = []
+    hyperlink_items = getattr(page, "hyperlinks", None) or []
+    for item in hyperlink_items:
+        if isinstance(item, dict):
+            uri = item.get("uri") or item.get("URI")
+            if isinstance(uri, str) and uri.strip():
+                links.append(uri.strip())
+    return links
+
+
+def _extract_pypdf_links(reader: Any) -> list[str]:
+    links: list[str] = []
+    for page in reader.pages:
+        annotations = page.get("/Annots") or []
+        for annotation in annotations:
+            try:
+                obj = annotation.get_object()
+                action = obj.get("/A")
+                if action and action.get("/URI"):
+                    links.append(str(action.get("/URI")).strip())
+            except Exception:
+                continue
+    return links
 
 
 def _signal_pattern(terms: list[str]) -> re.Pattern[str]:

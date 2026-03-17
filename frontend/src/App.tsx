@@ -121,7 +121,7 @@ export default function App() {
               checked={useLlm}
               onChange={(event) => setUseLlm(event.target.checked)}
             />
-            <span>Use Gemini review when `GEMINI_API_KEY` is configured</span>
+            <span>Use OpenAI review when OPENAI_API_KEY is configured</span>
           </label>
 
           <label className="checkbox-row">
