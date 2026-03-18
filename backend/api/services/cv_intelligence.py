@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from .cv_openai import OpenAIReviewError, run_openai_extraction_review
+from .cv_gemini import GeminiReviewError, run_gemini_extraction_review
 from .cv_learning import load_learning_rules
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -92,25 +92,25 @@ def extract_cv_intelligence(
 
     if use_llm:
         try:
-            llm_review = run_openai_extraction_review(clean_text, target_role, structured, auto_learn)
+            llm_review = run_gemini_extraction_review(clean_text, target_role, structured, auto_learn)
             if llm_review.get("enabled"):
                 llm_structured = _normalize_output(llm_review.get("llm_structured_cv") or {})
                 comparison = _compare_extraction_outputs(
                     structured,
                     llm_structured,
                     llm_review.get("review") or {},
-                    llm_review.get("provider", "openai"),
+                    llm_review.get("provider", "gemini"),
                     llm_review.get("model", "unknown"),
                     llm_review.get("learning_update") or {},
                 )
-                extraction_mode = "heuristic_with_openai_review"
+                extraction_mode = "heuristic_with_gemini_review"
             else:
                 comparison = {
                     **_default_comparison(),
                     "llm_available": False,
-                    "fallback_reason": llm_review.get("reason", "OpenAI review unavailable"),
+                    "fallback_reason": llm_review.get("reason", "Gemini review unavailable"),
                 }
-        except OpenAIReviewError as exc:
+        except GeminiReviewError as exc:
             comparison = {
                 **_default_comparison(),
                 "llm_available": False,

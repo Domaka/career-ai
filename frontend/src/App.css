@@ -1,163 +1,58 @@
 #root {
-  max-width: 1100px;
+  max-width: 860px;
   margin: 0 auto;
-  padding: 32px 20px 48px;
+  padding: 16px;
 }
 
 .app-shell {
-  display: grid;
-  gap: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .panel {
-  border: 1px solid #d8dee9;
-  border-radius: 20px;
-  background: linear-gradient(180deg, #ffffff 0%, #f6f8fb 100%);
-  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.08);
-  padding: 24px;
-  text-align: left;
-}
-
-.hero-panel {
-  background:
-    radial-gradient(circle at top right, rgba(45, 212, 191, 0.18), transparent 28%),
-    linear-gradient(180deg, #ffffff 0%, #eef6ff 100%);
-}
-
-.eyebrow {
-  margin: 0 0 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.14em;
-  font-size: 0.74rem;
-  font-weight: 700;
-  color: #0f766e;
-}
-
-.hero-panel h1,
-.response-panel h2 {
-  margin: 0;
-  color: #132238;
-}
-
-.intro {
-  max-width: 60ch;
-  color: #41556f;
-  line-height: 1.6;
-}
-
-.health-pill {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-  margin-top: 10px;
-  padding: 10px 14px;
-  border-radius: 999px;
-  background: #e8fff8;
-  color: #155e75;
-  font-size: 0.95rem;
+  padding: 12px;
 }
 
 .upload-form {
-  display: grid;
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .upload-form label {
-  display: grid;
-  gap: 8px;
-  font-weight: 600;
-  color: #24364b;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .checkbox-row {
   display: flex;
-  gap: 10px;
   align-items: center;
+  gap: 8px;
 }
 
 .checkbox-row input {
   width: auto;
-  margin: 0;
 }
 
-.checkbox-row span {
-  font-weight: 500;
-}
-
-.upload-form input {
-  width: 100%;
-  border: 1px solid #cbd5e1;
-  border-radius: 12px;
-  background: #fff;
-  padding: 12px 14px;
-  font: inherit;
-  color: #0f172a;
-}
-
-.upload-form button {
-  width: fit-content;
-  border: 0;
-  border-radius: 12px;
-  background: #0f766e;
-  color: #fff;
-  padding: 12px 18px;
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.upload-form button:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.file-note {
-  margin-bottom: 0;
-  color: #334155;
-}
-
-.error-banner {
-  margin-bottom: 0;
-  color: #991b1b;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-  border-radius: 12px;
-  padding: 12px 14px;
-}
-
-.response-header {
+.auth-toggle {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 10px;
 }
 
-.response-header span {
-  color: #475569;
-  font-size: 0.92rem;
+.auth-status,
+.response-header,
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .response-panel pre {
   overflow: auto;
-  margin: 16px 0 0;
-  padding: 18px;
-  border-radius: 14px;
-  background: #0f172a;
-  color: #e2e8f0;
-  line-height: 1.5;
-}
-
-@media (max-width: 640px) {
-  #root {
-    padding: 20px 14px 32px;
-  }
-
-  .panel {
-    padding: 18px;
-  }
-
-  .upload-form button {
-    width: 100%;
-  }
+  margin-top: 8px;
+  white-space: pre-wrap;
 }

@@ -50,6 +50,14 @@ REVIEW_SCHEMA = {
     "risky_changes": [],
 }
 
+PROFILE_ANALYSIS_SCHEMA = {
+    "summary": "",
+    "strengths": [],
+    "weaknesses": [],
+    "talent_gaps": [],
+    "general_recommendations": [],
+}
+
 
 class GeminiReviewError(Exception):
     pass
@@ -90,6 +98,32 @@ def run_gemini_extraction_review(
         "llm_structured_cv": llm_structured,
         "review": review,
         "learning_update": learning_update,
+    }
+
+
+def run_gemini_profile_analysis(
+    structured_cv: dict[str, Any],
+    derived_metrics: dict[str, Any],
+    target_role: str | None,
+) -> dict[str, Any]:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return {
+            "enabled": False,
+            "reason": "GEMINI_API_KEY is not configured",
+        }
+
+    analysis = _call_gemini_json(
+        _build_profile_analysis_prompt(structured_cv, derived_metrics, target_role),
+        PROFILE_ANALYSIS_SCHEMA,
+        api_key,
+    )
+
+    return {
+        "enabled": True,
+        "provider": "gemini",
+        "model": os.getenv("GEMINI_MODEL", GEMINI_MODEL),
+        "analysis": analysis,
     }
 
 
@@ -190,4 +224,30 @@ Heuristic output:
 
 Gemini output:
 {json.dumps(llm_structured, indent=2)}
+""".strip()
+
+
+def _build_profile_analysis_prompt(
+    structured_cv: dict[str, Any],
+    derived_metrics: dict[str, Any],
+    target_role: str | None,
+) -> str:
+    return f"""
+You are a career profile analyst.
+
+Return strict JSON only using this schema:
+{json.dumps(PROFILE_ANALYSIS_SCHEMA, indent=2)}
+
+Rules:
+- Use only evidence from provided data.
+- No hallucinations.
+- Keep each list concise and practical.
+
+Target role: {target_role or 'null'}
+
+Structured CV:
+{json.dumps(structured_cv, indent=2)}
+
+Derived metrics:
+{json.dumps(derived_metrics, indent=2)}
 """.strip()
